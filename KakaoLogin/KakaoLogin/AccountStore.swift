@@ -35,6 +35,15 @@ final class AccountStore: NSObject, ObservableObject {
         self.client = client
         self.keychainWrapper = keychainWrapper
         KakaoSDK.initSDK(appKey: appKey)
+        super.init()
+        guard let token = keychainWrapper.retreive(OAuthToken.self, account: Key.oauthToken),
+              .now < token.expiredAt else {
+            return
+        }
+        guard let user = keychainWrapper.retreive(KakaoSDKUser.User.self, account: Key.user) else {
+            return
+        }
+        currentUser = .authenticated(user)
     }
     
     @MainActor
@@ -54,6 +63,7 @@ final class AccountStore: NSObject, ObservableObject {
         keychainWrapper.set(item: token, account: Key.oauthToken)
         let user = try await fetchUser()
         currentUser = .authenticated(user)
+        keychainWrapper.set(item: user, account: Key.user)
     }
     
     func signOut() {
@@ -69,6 +79,7 @@ final class AccountStore: NSObject, ObservableObject {
             }
             currentUser = nil
             keychainWrapper.delete(account: Key.oauthToken)
+            keychainWrapper.delete(account: Key.user)
         }
     }
     
@@ -95,6 +106,7 @@ enum User {
 private extension AccountStore {
     enum Key {
         static let oauthToken = "OAUTHTOKEN"
+        static let user = "USER"
     }
 }
 
