@@ -16,7 +16,7 @@ private extension Logger {
 }
 
 final class AccountStore: NSObject, ObservableObject {
-    @Published private(set) var currentUser: User?
+    @Published private(set) var currentUser: User? = .default
     
     var isSignedIn: Bool {
         currentUser != nil
@@ -66,6 +66,7 @@ final class AccountStore: NSObject, ObservableObject {
         keychainWrapper.set(item: user, account: Key.user)
     }
     
+    @MainActor
     func signOut() {
         Task {
             let _: Void = try await withCheckedThrowingContinuation { continuation in
