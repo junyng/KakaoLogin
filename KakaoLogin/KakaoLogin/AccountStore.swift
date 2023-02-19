@@ -24,19 +24,22 @@ final class AccountStore: NSObject, ObservableObject {
     
     private let appKey: String
     private let client: UserApi
+    private let keychainWrapper: KeychainWrapper
     
     init(
         appKey: String = ProcessInfo.processInfo.environment["NATIVE_APP_KEY"] ?? "",
-        client: UserApi = .shared
+        client: UserApi = .shared,
+        keychainWrapper: KeychainWrapper = .init()
     ) {
         self.appKey = appKey
         self.client = client
+        self.keychainWrapper = keychainWrapper
         KakaoSDK.initSDK(appKey: appKey)
     }
     
     @MainActor
     func signIn() async throws {
-        let _: OAuthToken = try await withCheckedThrowingContinuation { continuation in
+        let token: OAuthToken = try await withCheckedThrowingContinuation { continuation in
             client.loginWithKakaoAccount { token, error in
                 if let error = error {
                     continuation.resume(throwing: error)
@@ -48,6 +51,7 @@ final class AccountStore: NSObject, ObservableObject {
                 continuation.resume(returning: token)
             }
         }
+        keychainWrapper.set(item: token, account: Key.oauthToken)
         let user = try await fetchUser()
         currentUser = .authenticated(user)
     }
@@ -64,6 +68,7 @@ final class AccountStore: NSObject, ObservableObject {
                 }
             }
             currentUser = nil
+            keychainWrapper.delete(account: Key.oauthToken)
         }
     }
     
@@ -87,12 +92,63 @@ enum User {
     case authenticated(KakaoSDKUser.User)
 }
 
-// TODO: save oauth token
-//private let decoder = JSONDecoder()
-//private let encoder = JSONEncoder()
-//
-//private extension AccountStore {
-//    enum Key {
-//        static let oauthToken = "OAUTHTOKEN"
-//    }
-//}
+private extension AccountStore {
+    enum Key {
+        static let oauthToken = "OAUTHTOKEN"
+    }
+}
+
+struct KeychainWrapper {
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+    
+    private var service: String {
+        String(describing: type(of: self))
+    }
+    
+    init(encoder: JSONEncoder = .init(), decoder: JSONDecoder = .init()) {
+        self.encoder = encoder
+        self.decoder = decoder
+    }
+    
+    func set<T: Codable>(item: T, account: String) {
+        guard let encoded = try? encoder.encode(item) else {
+            return
+        }
+        let query = [
+            kSecClass: kSecClassGenericPassword,
+            kSecValueData: encoded,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock
+        ] as CFDictionary
+        SecItemAdd(query, nil)
+    }
+    
+    func retreive<T: Codable>(_ type: T.Type, account: String) -> T? {
+        var item: CFTypeRef?
+        let query = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecReturnData: true
+        ] as CFDictionary
+        SecItemCopyMatching(query, &item)
+        guard let data = item as? Data else {
+            return nil
+        }
+        guard let decoded = try? decoder.decode(type.self, from: data) else {
+            return nil
+        }
+        return decoded
+    }
+    
+    func delete(account: String) {
+        let query = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrAccount: account,
+            kSecAttrService: service
+        ] as CFDictionary
+        SecItemDelete(query)
+    }
+}
